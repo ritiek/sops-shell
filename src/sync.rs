@@ -69,11 +69,11 @@ pub fn process_file(filepath: &Path, dry_run: bool) -> Result<(usize, usize)> {
     };
 
     if mappings.is_empty() {
-        println!("  No secrets with 'shell:' commands found");
+        println!("  No secret(s) with 'shell:' commands found");
         return Ok((0, 0));
     }
 
-    println!("  Found {} secrets with commands\n", mappings.len());
+    println!("  Found {} secret(s) with commands\n", mappings.len());
 
     let mut updates = Vec::new();
 
