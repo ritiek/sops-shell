@@ -9,9 +9,17 @@ pub fn sops_decrypt(filepath: &Path) -> Result<String> {
 
 pub fn sops_set(filepath: &Path, key: &str, value: &str) -> Result<()> {
     let json_value = format_value_for_sops(value)?;
+    let path = if filepath.extension().and_then(|s| s.to_str()) == Some("ini") {
+        // For ini files, assume keys are in [config] section
+        &format!(r#"["config"]["{}"] {}"#, key, json_value)
+    } else {
+        // For other formats, use direct key path
+        &format!(r#"["{}"] {}"#, key, json_value)
+    };
+
     run_sops_command(vec![
         "--set",
-        &format!(r#"["{}"] {}"#, key, json_value),
+        path,
         &filepath.to_string_lossy()
     ])?;
     Ok(())

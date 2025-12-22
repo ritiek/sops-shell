@@ -39,13 +39,19 @@ pub fn parse_decrypted_value(decrypted_content: &str, key: &str) -> Option<Strin
     decrypted_content.lines()
         .filter(|line| {
             let trimmed = line.trim();
-            !trimmed.is_empty() && !trimmed.starts_with('#')
+            !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with(';')
         })
         .find_map(|line| {
             let trimmed = line.trim();
-            trimmed.strip_prefix(key)
-                .and_then(|rest| rest.trim().strip_prefix(':'))
-                .map(|value_part| value_part.trim().trim_matches('"').to_string())
+            if let Some(rest) = trimmed.strip_prefix(key) {
+                if let Some(value_part) = rest.trim().strip_prefix('=') {
+                    return Some(value_part.trim().trim_matches('"').to_string());
+                }
+                if let Some(value_part) = rest.trim().strip_prefix(':') {
+                    return Some(value_part.trim().trim_matches('"').to_string());
+                }
+            }
+            None
         })
 }
 

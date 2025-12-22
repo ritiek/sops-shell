@@ -11,7 +11,7 @@ pub fn parse_commands(decrypted_content: &str) -> Result<Vec<CommandMapping>> {
     let lines: Vec<&str> = decrypted_content.split('\n').collect();
     let mut mappings = Vec::new();
 
-    let shell_comment_regex = Regex::new(r"^\s*#\s*shell:\s*(.+)$")?;
+    let shell_comment_regex = Regex::new(r"^\s*[#;]\s*shell:\s*(.+)$")?;
 
     for (i, line) in lines.iter().enumerate() {
         let stripped = line.trim();
