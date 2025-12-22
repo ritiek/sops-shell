@@ -55,8 +55,29 @@ pub fn parse_decrypted_value(decrypted_content: &str, key: &str) -> Option<Strin
         })
 }
 
+fn has_comment_lines(filepath: &Path) -> Result<bool> {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+
+    let file = File::open(filepath)?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines().take(100) {
+        let line = line?;
+        if line.trim_start().starts_with('#') || line.trim_start().starts_with(';') {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub fn process_file(filepath: &Path, dry_run: bool) -> Result<(usize, usize)> {
     println!("\nProcessing {}...", filepath.display());
+
+    if !has_comment_lines(filepath)? {
+        println!("  No comment lines found, skipping decryption");
+        return Ok((0, 0));
+    }
 
     let decrypted = match sops_decrypt(filepath) {
         Ok(content) => content,
