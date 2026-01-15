@@ -5,6 +5,11 @@ use std::process::Command;
 use crate::parser::parse_commands;
 use crate::sops::{sops_decrypt, sops_set};
 
+enum DecryptedFile {
+    Yaml(Vec<saphyr::YamlOwned>),
+    Other(String),
+}
+
 fn print_file_error(operation: &str, error: &anyhow::Error) {
     println!("  Error: Failed to {}: {}", operation, error);
 }
@@ -35,24 +40,57 @@ pub fn execute_command(command: &str) -> Result<String> {
     Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
 
-pub fn parse_decrypted_value(decrypted_content: &str, key: &str) -> Option<String> {
-    decrypted_content.lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with(';')
-        })
-        .find_map(|line| {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix(key) {
-                if let Some(value_part) = rest.trim().strip_prefix('=') {
-                    return Some(value_part.trim().trim_matches('"').to_string());
-                }
-                if let Some(value_part) = rest.trim().strip_prefix(':') {
-                    return Some(value_part.trim().trim_matches('"').to_string());
-                }
+fn parse_decrypted_file(filepath: &Path, decrypted_content: String) -> Result<DecryptedFile> {
+    if let Some(ext) = filepath.extension()
+        && (ext == "yaml" || ext == "yml")
+    {
+        use saphyr::{LoadableYamlNode, YamlOwned};
+
+        let yaml = YamlOwned::load_from_str(&decrypted_content)
+            .inspect_err(|e| print_file_error("scan yaml", &(e.clone().into())))?;
+        Ok(DecryptedFile::Yaml(yaml))
+    } else {
+        Ok(DecryptedFile::Other(decrypted_content))
+    }
+}
+
+fn parse_decrypted_value(decrypted_file: &DecryptedFile, key: &str) -> Option<String> {
+    match decrypted_file {
+        DecryptedFile::Yaml(docs) => {
+            use saphyr::{ScalarOwned::*, YamlOwned::Value};
+
+            // Only handle the first YAML document
+            let doc = &docs[0];
+            match &doc[key] {
+                Value(scalar) => match scalar {
+                    Boolean(val) => Some(val.to_string()),
+                    Integer(val) => Some(val.to_string()),
+                    FloatingPoint(val) => Some(val.to_string()),
+                    String(val) => Some(val.trim().to_owned()),
+                    Null => Some("null".to_string()),
+                },
+                _ => None,
             }
-            None
-        })
+        }
+        DecryptedFile::Other(decrypted_content) => decrypted_content
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with(';')
+            })
+            .find_map(|line| {
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix(key) {
+                    if let Some(value_part) = rest.trim().strip_prefix('=') {
+                        return Some(value_part.trim().trim_matches('"').to_string());
+                    }
+                    if let Some(value_part) = rest.trim().strip_prefix(':') {
+                        return Some(value_part.trim().trim_matches('"').to_string());
+                    }
+                }
+                None
+            }),
+    }
 }
 
 fn has_comment_lines(filepath: &Path) -> Result<bool> {
@@ -102,6 +140,8 @@ pub fn process_file(filepath: &Path, dry_run: bool) -> Result<(usize, usize)> {
 
     println!("  Found {} secret(s) with commands\n", mappings.len());
 
+    let decrypted_file = parse_decrypted_file(filepath, decrypted)?;
+
     let mut updates = Vec::new();
 
     for mapping in &mappings {
@@ -110,7 +150,7 @@ pub fn process_file(filepath: &Path, dry_run: bool) -> Result<(usize, usize)> {
 
         match execute_command(&mapping.command) {
             Ok(value) => {
-                let current_value = parse_decrypted_value(&decrypted, &mapping.key);
+                let current_value = parse_decrypted_value(&decrypted_file, &mapping.key);
 
                 if Some(&value) != current_value.as_ref() {
                     updates.push((mapping.key.clone(), value.clone()));
@@ -202,6 +242,23 @@ mod tests {
         let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
         temp_file.write_all(content.as_bytes()).expect("Failed to write to temp file");
         temp_file
+    }
+
+    mod yaml {
+        use super::*;
+
+        #[test]
+        fn test_yaml_multiline() {
+            let key = "example-key";
+            let multiline_string = "a\nmultiline\nsecret";
+            let multiline_yaml_str = multiline_string.replace("\n", "\n    ");
+            let yaml_content = format!("{key}: |\n    {multiline_yaml_str}");
+
+            let decrypted_file = parse_decrypted_file(Path::new("test.yaml"), yaml_content)
+                .expect("Should not fail");
+            let value = parse_decrypted_value(&decrypted_file, &key).expect("Should not fail");
+            assert_eq!(value, multiline_string);
+        }
     }
 
     mod has_comment_lines {
